@@ -18,178 +18,6 @@ import io
 from bs4 import BeautifulSoup
 import http.client
 from typing import Optional, Tuple, List, Dict, Any
-import json
-import tempfile
-
-# Application version - UPDATE THIS WITH EACH RELEASE
-APP_VERSION = "1.1.2"
-GITHUB_REPO = "Remix22222/SteamToolsAppAdder"
-UPDATE_CHECK_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-
-
-class AutoUpdater:
-    """Handles automatic updates from GitHub releases."""
-
-    def __init__(self):
-        self.current_version = APP_VERSION
-        self.latest_version = None
-        self.download_url = None
-        self.is_executable = self.check_if_executable()
-
-    def check_if_executable(self) -> bool:
-        """Check if running as a compiled executable (PyInstaller)."""
-        return getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
-
-    def parse_version(self, version_string: str) -> tuple:
-        """Parse version string to tuple for comparison."""
-        # Remove 'v' prefix if present
-        version_string = version_string.lstrip('v')
-        try:
-            parts = version_string.split('.')
-            return tuple(int(part) for part in parts)
-        except:
-            return (0, 0, 0)
-
-    def check_for_updates(self) -> Dict[str, Any]:
-        """
-        Check GitHub for latest release.
-        Returns dict with 'available', 'version', 'url', 'notes' keys.
-        """
-        try:
-            headers = {'Accept': 'application/vnd.github.v3+json'}
-
-            # Try the /latest endpoint first
-            try:
-                response = requests.get(UPDATE_CHECK_URL, headers=headers, timeout=10)
-                response.raise_for_status()
-                release_data = response.json()
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 404:
-                    # If /latest fails, get all releases and find the newest
-                    print("Latest release endpoint failed, fetching all releases...")
-                    all_releases_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
-                    response = requests.get(all_releases_url, headers=headers, timeout=10)
-                    response.raise_for_status()
-
-                    releases = response.json()
-                    if not releases:
-                        raise Exception("No releases found in repository")
-
-                    # Filter out drafts and pre-releases, then get the first one
-                    valid_releases = [r for r in releases if
-                                      not r.get('draft', False) and not r.get('prerelease', False)]
-
-                    if not valid_releases:
-                        # If no valid releases, use the first release anyway
-                        valid_releases = releases
-
-                    release_data = valid_releases[0]
-                else:
-                    raise
-
-            self.latest_version = release_data['tag_name'].lstrip('v')
-
-            # Get download URL for .exe file
-            for asset in release_data.get('assets', []):
-                if asset['name'].endswith('.exe'):
-                    self.download_url = asset['browser_download_url']
-                    break
-
-            # Compare versions
-            current = self.parse_version(self.current_version)
-            latest = self.parse_version(self.latest_version)
-
-            update_available = latest > current
-
-            return {
-                'available': update_available,
-                'version': self.latest_version,
-                'current_version': self.current_version,
-                'url': self.download_url,
-                'notes': release_data.get('body', 'No release notes available.'),
-                'html_url': release_data.get('html_url', ''),
-                'is_executable': self.is_executable
-            }
-
-        except Exception as e:
-            print(f"Error checking for updates: {e}")
-            return {
-                'available': False,
-                'error': str(e),
-                'is_executable': self.is_executable
-            }
-
-    def download_update(self, url: str, progress_callback=None) -> Optional[str]:
-        """
-        Download update file to temporary directory.
-        Returns path to downloaded file or None on failure.
-        """
-        try:
-            temp_dir = tempfile.gettempdir()
-            filename = url.split('/')[-1]
-            filepath = os.path.join(temp_dir, filename)
-
-            if progress_callback:
-                progress_callback("Downloading update...")
-
-            response = requests.get(url, stream=True, timeout=30)
-            response.raise_for_status()
-
-            total_size = int(response.headers.get('content-length', 0))
-            downloaded = 0
-
-            with open(filepath, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if progress_callback and total_size > 0:
-                            percent = (downloaded / total_size) * 100
-                            progress_callback(f"Downloading: {percent:.1f}%")
-
-            if progress_callback:
-                progress_callback("Download complete!")
-
-            return filepath
-
-        except Exception as e:
-            print(f"Error downloading update: {e}")
-            if progress_callback:
-                progress_callback(f"Download failed: {e}")
-            return None
-
-    def install_update(self, update_file: str) -> bool:
-        """
-        Install the update by replacing current executable.
-        Uses a batch script to handle file replacement after exit.
-        """
-        try:
-            current_exe = sys.executable
-            backup_exe = current_exe + ".backup"
-
-            # Create update batch script
-            batch_script = f"""@echo off
-timeout /t 2 /nobreak > nul
-echo Installing update...
-move /y "{current_exe}" "{backup_exe}"
-move /y "{update_file}" "{current_exe}"
-start "" "{current_exe}"
-del "%~f0"
-"""
-
-            batch_file = os.path.join(tempfile.gettempdir(), "update_installer.bat")
-            with open(batch_file, 'w') as f:
-                f.write(batch_script)
-
-            # Launch update script
-            subprocess.Popen([batch_file], shell=True,
-                             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
-
-            return True
-
-        except Exception as e:
-            print(f"Error installing update: {e}")
-            return False
 
 
 class SteamWebSearch:
@@ -665,17 +493,15 @@ class SteamToolsInstaller:
 
     def __init__(self, root):
         self.root = root
-        self.root.title(f"Steam Tools App Adder v{APP_VERSION}")
+        self.root.title("Steam Tools App Adder Made By Remix")
         self.root.geometry("600x600")
         self.root.resizable(False, False)
-
         def resource_path(relative_path):
             try:
                 base_path = sys._MEIPASS
             except Exception:
                 base_path = os.path.abspath(".")
             return os.path.join(base_path, relative_path)
-
         if Path("icon.ico").exists():
             root.wm_iconbitmap("icon.ico")
         elif Path(resource_path("icon.ico")).exists():
@@ -683,7 +509,6 @@ class SteamToolsInstaller:
                 root.wm_iconbitmap(resource_path("icon.ico"))
             except:
                 pass
-
         # Color scheme
         self.bg_color = "#1a1b26"
         self.card_color = "#24283b"
@@ -694,8 +519,7 @@ class SteamToolsInstaller:
 
         self.downloader = SteamToolsDownloader()
         self.is_processing = False
-        self.selection_popup = None
-        self.updater = AutoUpdater()
+        self.selection_popup = None  # Track the selection popup
 
         self.create_widgets()
 
@@ -704,107 +528,6 @@ class SteamToolsInstaller:
             self.install_btn.configure_state(False)
             self.update_status("ERROR: SteamTools not found.")
             self.show_steamtools_missing_dialog()
-        else:
-            # Check for updates after GUI is ready
-            self.root.after(1000, self.check_for_updates_silent)
-
-    def check_for_updates_silent(self):
-        """Check for updates in background without blocking UI."""
-        self.log("🔍 Checking for updates...")
-        thread = threading.Thread(target=self._check_updates_thread)
-        thread.daemon = True
-        thread.start()
-
-    def _check_updates_thread(self):
-        """Background thread for checking updates."""
-        try:
-            update_info = self.updater.check_for_updates()
-
-            if update_info.get('error'):
-                # Error occurred during update check
-                error_msg = f"⚠️ Update check failed: {update_info['error']}"
-                self.root.after(0, lambda: self.log(error_msg))
-                return
-
-            if update_info.get('available'):
-                if update_info.get('is_executable') and update_info.get('url'):
-                    # Auto-update for compiled executables
-                    self.root.after(0, lambda: self.auto_install_update(update_info))
-                else:
-                    # Running from source - just log
-                    msg = f"ℹ️ Update v{update_info.get('version')} available (manual update required - running from source)"
-                    self.root.after(0, lambda: self.log(msg))
-            elif not update_info.get('is_executable'):
-                # Running from source
-                self.root.after(0, lambda: self.log("ℹ️ Running from source (auto-updates disabled)"))
-            else:
-                # No updates available
-                self.root.after(0, lambda: self.log(f"✓ You're running the latest version (v{APP_VERSION})"))
-
-        except Exception as e:
-            error_msg = f"⚠️ Update check failed: {str(e)}"
-            self.root.after(0, lambda: self.log(error_msg))
-            print(f"Update check failed: {e}")
-
-    def auto_install_update(self, update_info):
-        """Automatically download and install update without user interaction."""
-        msg = f"🔄 New version detected: v{update_info['version']} (current: v{update_info['current_version']})"
-        self.log(msg)
-        self.log("Starting automatic update - please wait...")
-        self.update_status(f"Downloading update v{update_info['version']}...")
-
-        # Disable install button during update
-        self.install_btn.configure_state(False)
-
-        # Start download in background thread
-        thread = threading.Thread(target=self._auto_download_and_install, args=(update_info,))
-        thread.daemon = True
-        thread.start()
-
-    def _auto_download_and_install(self, update_info):
-        """Download and install update automatically in background."""
-        try:
-            # Download
-            def progress_callback(msg):
-                self.root.after(0, lambda: self.log(msg))
-                self.root.after(0, lambda: self.update_status(msg))
-
-            update_file = self.updater.download_update(
-                update_info['url'],
-                progress_callback=progress_callback
-            )
-
-            if not update_file:
-                self.root.after(0, lambda: self.log("❌ Auto-update failed: Could not download"))
-                self.root.after(0, lambda: self.update_status("Ready"))
-                self.root.after(0, lambda: self.install_btn.configure_state(True))
-                return
-
-            self.root.after(0, lambda: self.log("✓ Update downloaded successfully"))
-            self.root.after(0, lambda: self.update_status("Installing update..."))
-            self.root.after(0, lambda: self.log("📦 Installing update and restarting application..."))
-
-            # Install
-            if self.updater.install_update(update_file):
-                self.root.after(0, lambda: self.log("✓ Update complete - Application will restart now"))
-                self.root.after(0, lambda: messagebox.showinfo(
-                    "Update Complete",
-                    f"Successfully updated to v{update_info['version']}!\n\n"
-                    "The application will restart automatically.",
-                    parent=self.root
-                ))
-                time.sleep(1)
-                # Exit to trigger update
-                sys.exit(0)
-            else:
-                self.root.after(0, lambda: self.log("❌ Update installation failed"))
-                self.root.after(0, lambda: self.update_status("Ready"))
-                self.root.after(0, lambda: self.install_btn.configure_state(True))
-
-        except Exception as e:
-            self.root.after(0, lambda: self.log(f"❌ Auto-update error: {str(e)}"))
-            self.root.after(0, lambda: self.update_status("Ready"))
-            self.root.after(0, lambda: self.install_btn.configure_state(True))
 
     def show_steamtools_missing_dialog(self):
         """Display dialog when SteamTools is not found."""
@@ -833,7 +556,7 @@ class SteamToolsInstaller:
         header_frame.pack(fill=tk.X)
         header_frame.pack_propagate(False)
 
-        title = tk.Label(header_frame, text="⚠️ SteamTools Not Found",
+        title = tk.Label(header_frame, text="⚠️  SteamTools Not Found",
                          font=("Segoe UI", 18, "bold"),
                          fg="#ffffff", bg="#ff6b6b")
         title.pack(pady=(25, 10))
@@ -880,7 +603,7 @@ class SteamToolsInstaller:
             popup.destroy()
 
         # Create buttons with better sizing
-        download_btn = ModernButton(button_frame, "⬇️ Download SteamTools", open_download_link,
+        download_btn = ModernButton(button_frame, "⬇️  Download SteamTools", open_download_link,
                                     width=280, height=50, bg=self.bg_color)
         download_btn.pack(side=tk.LEFT, padx=(0, 10))
 
@@ -893,16 +616,11 @@ class SteamToolsInstaller:
         main_frame = tk.Frame(self.root, bg=self.bg_color)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=30, pady=30)
 
-        # Title with version
+        # Title
         title = tk.Label(main_frame, text="Steam Tools App Adder",
                          font=("Segoe UI", 24, "bold"),
                          fg=self.text_color, bg=self.bg_color)
-        title.pack(pady=(0, 5))
-
-        version_label = tk.Label(main_frame, text=f"Version {APP_VERSION}",
-                                 font=("Segoe UI", 9),
-                                 fg="#7982a9", bg=self.bg_color)
-        version_label.pack(pady=(0, 10))
+        title.pack(pady=(0, 10))
 
         subtitle = tk.Label(main_frame, text="Enter game name, App ID or Steam URL",
                             font=("Segoe UI", 11),
@@ -1091,7 +809,7 @@ class SteamToolsInstaller:
         header_frame.pack(fill=tk.X)
         header_frame.pack_propagate(False)
 
-        title = tk.Label(header_frame, text="🔍 Found Similar Games",
+        title = tk.Label(header_frame, text="🔍  Found Similar Games",
                          font=("Segoe UI", 17, "bold"),
                          fg="#ffffff", bg="#5c7cfa")
         title.pack(pady=(20, 8))
@@ -1193,13 +911,13 @@ class SteamToolsInstaller:
         right_button_frame = tk.Frame(button_frame, bg=self.bg_color)
         right_button_frame.pack(side=tk.RIGHT)
 
-        ModernButton(left_button_frame, "✓ Confirm Selection", on_select,
+        ModernButton(left_button_frame, "✓  Confirm Selection", on_select,
                      width=180, height=45, bg=self.bg_color).pack(side=tk.LEFT, padx=2)
 
-        ModernButton(right_button_frame, "↻ Try Different Search", on_try_again,
+        ModernButton(right_button_frame, "↻  Try Different Search", on_try_again,
                      width=160, height=45, bg=self.bg_color).pack(side=tk.LEFT, padx=2)
 
-        ModernButton(right_button_frame, "✕ Cancel", on_cancel,
+        ModernButton(right_button_frame, "✕  Cancel", on_cancel,
                      width=100, height=45, bg=self.bg_color).pack(side=tk.LEFT, padx=2)
 
         # Bind Enter key to confirm selection
