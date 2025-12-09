@@ -38,5 +38,4 @@ python steamtoolsadder.py
 1. **Launch** the application
 2. **Enter** game name, App ID, or Steam URL
 3. **Click** "Install" or press Enter
-4. **Select** from matches if multiple found
-5. **Wait** for automated installation
+4. **Wait** for automated installation
