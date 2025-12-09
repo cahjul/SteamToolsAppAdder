@@ -18,6 +18,348 @@ import io
 from bs4 import BeautifulSoup
 import http.client
 from typing import Optional, Tuple, List, Dict, Any
+import json
+import tempfile
+
+# Application version - UPDATE THIS WITH EACH RELEASE
+APP_VERSION = "1.1.2"
+GITHUB_REPO = "Remix22222/SteamToolsAppAdder"
+UPDATE_CHECK_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+
+
+class AutoUpdater:
+    """Handles automatic updates from GitHub releases."""
+
+    def __init__(self):
+        self.current_version = APP_VERSION
+        self.latest_version = None
+        self.download_url = None
+        self.is_executable = self.check_if_executable()
+
+    def check_if_executable(self) -> bool:
+        """Check if running as a compiled executable (PyInstaller)."""
+        return getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
+
+    def parse_version(self, version_string: str) -> tuple:
+        """Parse version string to tuple for comparison."""
+        # Remove 'v' prefix if present
+        version_string = version_string.lstrip('v')
+        try:
+            parts = version_string.split('.')
+            return tuple(int(part) for part in parts)
+        except:
+            return (0, 0, 0)
+
+    def check_for_updates(self) -> Dict[str, Any]:
+        """
+        Check GitHub for latest release.
+        Returns dict with 'available', 'version', 'url', 'notes' keys.
+        """
+        try:
+            headers = {'Accept': 'application/vnd.github.v3+json'}
+            response = requests.get(UPDATE_CHECK_URL, headers=headers, timeout=10)
+            response.raise_for_status()
+
+            release_data = response.json()
+            self.latest_version = release_data['tag_name'].lstrip('v')
+
+            # Get download URL for .exe file
+            for asset in release_data.get('assets', []):
+                if asset['name'].endswith('.exe'):
+                    self.download_url = asset['browser_download_url']
+                    break
+
+            # Compare versions
+            current = self.parse_version(self.current_version)
+            latest = self.parse_version(self.latest_version)
+
+            update_available = latest > current
+
+            return {
+                'available': update_available,
+                'version': self.latest_version,
+                'current_version': self.current_version,
+                'url': self.download_url,
+                'notes': release_data.get('body', 'No release notes available.'),
+                'html_url': release_data.get('html_url', ''),
+                'is_executable': self.is_executable
+            }
+
+        except Exception as e:
+            print(f"Error checking for updates: {e}")
+            return {
+                'available': False,
+                'error': str(e),
+                'is_executable': self.is_executable
+            }
+
+    def download_update(self, url: str, progress_callback=None) -> Optional[str]:
+        """
+        Download update file to temporary directory.
+        Returns path to downloaded file or None on failure.
+        """
+        try:
+            temp_dir = tempfile.gettempdir()
+            filename = url.split('/')[-1]
+            filepath = os.path.join(temp_dir, filename)
+
+            if progress_callback:
+                progress_callback("Downloading update...")
+
+            response = requests.get(url, stream=True, timeout=30)
+            response.raise_for_status()
+
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
+
+            with open(filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if progress_callback and total_size > 0:
+                            percent = (downloaded / total_size) * 100
+                            progress_callback(f"Downloading: {percent:.1f}%")
+
+            if progress_callback:
+                progress_callback("Download complete!")
+
+            return filepath
+
+        except Exception as e:
+            print(f"Error downloading update: {e}")
+            if progress_callback:
+                progress_callback(f"Download failed: {e}")
+            return None
+
+    def install_update(self, update_file: str) -> bool:
+        """
+        Install the update by replacing current executable.
+        Uses a batch script to handle file replacement after exit.
+        """
+        try:
+            current_exe = sys.executable
+            backup_exe = current_exe + ".backup"
+
+            # Create update batch script
+            batch_script = f"""@echo off
+timeout /t 2 /nobreak > nul
+echo Installing update...
+move /y "{current_exe}" "{backup_exe}"
+move /y "{update_file}" "{current_exe}"
+start "" "{current_exe}"
+del "%~f0"
+"""
+
+            batch_file = os.path.join(tempfile.gettempdir(), "update_installer.bat")
+            with open(batch_file, 'w') as f:
+                f.write(batch_script)
+
+            # Launch update script
+            subprocess.Popen([batch_file], shell=True,
+                             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
+
+            return True
+
+        except Exception as e:
+            print(f"Error installing update: {e}")
+            return False
+
+
+class UpdateDialog:
+    """Dialog window for update notifications."""
+
+    def __init__(self, parent, update_info, updater, on_complete=None):
+        self.parent = parent
+        self.update_info = update_info
+        self.updater = updater
+        self.on_complete = on_complete
+        self.dialog = None
+
+    def show(self):
+        """Display the update dialog."""
+        self.dialog = tk.Toplevel(self.parent)
+        self.dialog.title("Update Available")
+        self.dialog.transient(self.parent)
+        self.dialog.grab_set()
+        self.dialog.resizable(False, False)
+
+        # Colors
+        bg_color = "#1a1b26"
+        card_color = "#24283b"
+        text_color = "#c0caf5"
+        accent_color = "#5c7cfa"
+
+        self.dialog.configure(bg=bg_color)
+
+        width = 500
+        height = 450
+        screen_x = self.parent.winfo_screenwidth()
+        screen_y = self.parent.winfo_screenheight()
+        center_x = (screen_x - width) // 2
+        center_y = (screen_y - height) // 2
+        self.dialog.geometry(f"{width}x{height}+{center_x}+{center_y}")
+
+        # Header
+        header_frame = tk.Frame(self.dialog, bg="#51cf66", height=100)
+        header_frame.pack(fill=tk.X)
+        header_frame.pack_propagate(False)
+
+        title = tk.Label(header_frame, text="🎉 Update Available!",
+                         font=("Segoe UI", 18, "bold"),
+                         fg="#ffffff", bg="#51cf66")
+        title.pack(pady=(25, 5))
+
+        version_text = f"Version {self.update_info['version']} is now available"
+        subtitle = tk.Label(header_frame, text=version_text,
+                            font=("Segoe UI", 10),
+                            fg="#e0ffe0", bg="#51cf66")
+        subtitle.pack(pady=(0, 15))
+
+        # Content
+        content_frame = tk.Frame(self.dialog, bg=bg_color)
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=30, pady=20)
+
+        # Current version
+        current_label = tk.Label(content_frame,
+                                 text=f"Current version: {self.update_info['current_version']}",
+                                 font=("Segoe UI", 10),
+                                 fg="#7982a9", bg=bg_color)
+        current_label.pack(anchor="w", pady=(0, 15))
+
+        # Release notes
+        notes_label = tk.Label(content_frame, text="What's New:",
+                               font=("Segoe UI", 10, "bold"),
+                               fg=text_color, bg=bg_color)
+        notes_label.pack(anchor="w", pady=(0, 8))
+
+        notes_frame = tk.Frame(content_frame, bg=card_color)
+        notes_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
+
+        notes_text = tk.Text(notes_frame, font=("Segoe UI", 9),
+                             bg=card_color, fg=text_color,
+                             relief=tk.FLAT, bd=0, padx=15, pady=15,
+                             height=8, wrap=tk.WORD, state=tk.DISABLED)
+        notes_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollbar = tk.Scrollbar(notes_frame, command=notes_text.yview,
+                                 bg=card_color, troughcolor=card_color)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        notes_text.config(yscrollcommand=scrollbar.set)
+
+        notes_text.config(state=tk.NORMAL)
+        notes_text.insert(1.0, self.update_info.get('notes', 'No release notes available.'))
+        notes_text.config(state=tk.DISABLED)
+
+        # Progress label (hidden initially)
+        self.progress_label = tk.Label(content_frame, text="",
+                                       font=("Segoe UI", 9),
+                                       fg=accent_color, bg=bg_color)
+        self.progress_label.pack(pady=(0, 10))
+
+        # Buttons
+        button_frame = tk.Frame(content_frame, bg=bg_color)
+        button_frame.pack(fill=tk.X)
+
+        if self.update_info['is_executable'] and self.update_info.get('url'):
+            # Can auto-update
+            from_button = ModernButton
+
+            self.update_btn = from_button(button_frame, "⬇️ Download & Install",
+                                          self.start_update,
+                                          width=180, height=45, bg=bg_color)
+            self.update_btn.pack(side=tk.LEFT, padx=(0, 10))
+        else:
+            # Running from source or no download URL
+            pass
+
+        view_btn = ModernButton(button_frame, "🌐 View on GitHub",
+                                lambda: webbrowser.open(
+                                    self.update_info.get('html_url', f'https://github.com/{GITHUB_REPO}/releases')),
+                                width=150, height=45, bg=bg_color)
+        view_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        skip_btn = ModernButton(button_frame, "Skip", self.skip_update,
+                                width=80, height=45, bg=bg_color)
+        skip_btn.pack(side=tk.LEFT)
+
+    def update_progress(self, message):
+        """Update progress label."""
+        if self.dialog and self.dialog.winfo_exists():
+            self.progress_label.config(text=message)
+
+    def start_update(self):
+        """Start the update download and installation."""
+        if hasattr(self, 'update_btn'):
+            self.update_btn.configure_state(False)
+
+        thread = threading.Thread(target=self.download_and_install)
+        thread.daemon = True
+        thread.start()
+
+    def download_and_install(self):
+        """Download and install update in background thread."""
+        try:
+            # Download
+            update_file = self.updater.download_update(
+                self.update_info['url'],
+                progress_callback=lambda msg: self.dialog.after(0, lambda: self.update_progress(msg))
+            )
+
+            if not update_file:
+                self.dialog.after(0, lambda: messagebox.showerror(
+                    "Update Failed",
+                    "Failed to download update. Please download manually from GitHub."
+                ))
+                self.dialog.after(0, self.skip_update)
+                return
+
+            # Confirm installation
+            self.dialog.after(0, lambda: self.update_progress("Ready to install..."))
+
+            result = messagebox.askyesno(
+                "Install Update",
+                "Update downloaded successfully!\n\n"
+                "The application will restart to complete the installation.\n\n"
+                "Continue?",
+                parent=self.dialog
+            )
+
+            if result:
+                # Install and restart
+                if self.updater.install_update(update_file):
+                    messagebox.showinfo("Update Started",
+                                        "Update installation started.\n"
+                                        "Application will restart automatically.",
+                                        parent=self.dialog)
+                    # Exit application
+                    sys.exit(0)
+                else:
+                    messagebox.showerror("Installation Failed",
+                                         "Failed to install update. Please install manually.",
+                                         parent=self.dialog)
+            else:
+                # Clean up downloaded file
+                try:
+                    os.remove(update_file)
+                except:
+                    pass
+
+        except Exception as e:
+            self.dialog.after(0, lambda: messagebox.showerror(
+                "Update Error",
+                f"An error occurred during update:\n{str(e)}"
+            ))
+
+        finally:
+            self.dialog.after(0, self.skip_update)
+
+    def skip_update(self):
+        """Close dialog and skip update."""
+        if self.dialog and self.dialog.winfo_exists():
+            self.dialog.destroy()
+        if self.on_complete:
+            self.on_complete()
 
 
 class SteamWebSearch:
@@ -493,15 +835,17 @@ class SteamToolsInstaller:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("Steam Tools App Adder Made By Remix")
+        self.root.title(f"Steam Tools App Adder v{APP_VERSION}")
         self.root.geometry("600x600")
         self.root.resizable(False, False)
+
         def resource_path(relative_path):
             try:
                 base_path = sys._MEIPASS
             except Exception:
                 base_path = os.path.abspath(".")
             return os.path.join(base_path, relative_path)
+
         if Path("icon.ico").exists():
             root.wm_iconbitmap("icon.ico")
         elif Path(resource_path("icon.ico")).exists():
@@ -509,6 +853,7 @@ class SteamToolsInstaller:
                 root.wm_iconbitmap(resource_path("icon.ico"))
             except:
                 pass
+
         # Color scheme
         self.bg_color = "#1a1b26"
         self.card_color = "#24283b"
@@ -519,7 +864,8 @@ class SteamToolsInstaller:
 
         self.downloader = SteamToolsDownloader()
         self.is_processing = False
-        self.selection_popup = None  # Track the selection popup
+        self.selection_popup = None
+        self.updater = AutoUpdater()
 
         self.create_widgets()
 
@@ -528,6 +874,35 @@ class SteamToolsInstaller:
             self.install_btn.configure_state(False)
             self.update_status("ERROR: SteamTools not found.")
             self.show_steamtools_missing_dialog()
+        else:
+            # Check for updates after GUI is ready
+            self.root.after(1000, self.check_for_updates_silent)
+
+    def check_for_updates_silent(self):
+        """Check for updates in background without blocking UI."""
+        thread = threading.Thread(target=self._check_updates_thread)
+        thread.daemon = True
+        thread.start()
+
+    def _check_updates_thread(self):
+        """Background thread for checking updates."""
+        try:
+            update_info = self.updater.check_for_updates()
+
+            if update_info.get('available'):
+                # Show update dialog on main thread
+                self.root.after(0, lambda: self.show_update_dialog(update_info))
+            elif not update_info.get('is_executable'):
+                # Running from source
+                self.root.after(0, lambda: self.log("Running from source code (updates disabled)"))
+
+        except Exception as e:
+            print(f"Update check failed: {e}")
+
+    def show_update_dialog(self, update_info):
+        """Display update notification dialog."""
+        dialog = UpdateDialog(self.root, update_info, self.updater)
+        dialog.show()
 
     def show_steamtools_missing_dialog(self):
         """Display dialog when SteamTools is not found."""
@@ -556,7 +931,7 @@ class SteamToolsInstaller:
         header_frame.pack(fill=tk.X)
         header_frame.pack_propagate(False)
 
-        title = tk.Label(header_frame, text="⚠️  SteamTools Not Found",
+        title = tk.Label(header_frame, text="⚠️ SteamTools Not Found",
                          font=("Segoe UI", 18, "bold"),
                          fg="#ffffff", bg="#ff6b6b")
         title.pack(pady=(25, 10))
@@ -603,7 +978,7 @@ class SteamToolsInstaller:
             popup.destroy()
 
         # Create buttons with better sizing
-        download_btn = ModernButton(button_frame, "⬇️  Download SteamTools", open_download_link,
+        download_btn = ModernButton(button_frame, "⬇️ Download SteamTools", open_download_link,
                                     width=280, height=50, bg=self.bg_color)
         download_btn.pack(side=tk.LEFT, padx=(0, 10))
 
@@ -616,11 +991,16 @@ class SteamToolsInstaller:
         main_frame = tk.Frame(self.root, bg=self.bg_color)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=30, pady=30)
 
-        # Title
+        # Title with version
         title = tk.Label(main_frame, text="Steam Tools App Adder",
                          font=("Segoe UI", 24, "bold"),
                          fg=self.text_color, bg=self.bg_color)
-        title.pack(pady=(0, 10))
+        title.pack(pady=(0, 5))
+
+        version_label = tk.Label(main_frame, text=f"Version {APP_VERSION}",
+                                 font=("Segoe UI", 9),
+                                 fg="#7982a9", bg=self.bg_color)
+        version_label.pack(pady=(0, 10))
 
         subtitle = tk.Label(main_frame, text="Enter game name, App ID or Steam URL",
                             font=("Segoe UI", 11),
@@ -809,7 +1189,7 @@ class SteamToolsInstaller:
         header_frame.pack(fill=tk.X)
         header_frame.pack_propagate(False)
 
-        title = tk.Label(header_frame, text="🔍  Found Similar Games",
+        title = tk.Label(header_frame, text="🔍 Found Similar Games",
                          font=("Segoe UI", 17, "bold"),
                          fg="#ffffff", bg="#5c7cfa")
         title.pack(pady=(20, 8))
@@ -911,13 +1291,13 @@ class SteamToolsInstaller:
         right_button_frame = tk.Frame(button_frame, bg=self.bg_color)
         right_button_frame.pack(side=tk.RIGHT)
 
-        ModernButton(left_button_frame, "✓  Confirm Selection", on_select,
+        ModernButton(left_button_frame, "✓ Confirm Selection", on_select,
                      width=180, height=45, bg=self.bg_color).pack(side=tk.LEFT, padx=2)
 
-        ModernButton(right_button_frame, "↻  Try Different Search", on_try_again,
+        ModernButton(right_button_frame, "↻ Try Different Search", on_try_again,
                      width=160, height=45, bg=self.bg_color).pack(side=tk.LEFT, padx=2)
 
-        ModernButton(right_button_frame, "✕  Cancel", on_cancel,
+        ModernButton(right_button_frame, "✕ Cancel", on_cancel,
                      width=100, height=45, bg=self.bg_color).pack(side=tk.LEFT, padx=2)
 
         # Bind Enter key to confirm selection
