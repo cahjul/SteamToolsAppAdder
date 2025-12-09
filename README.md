@@ -11,7 +11,7 @@ A modern Windows application that makes installing games through SteamTools easy
 
 - **🔍 Smart Game Search** - Find games by name, App ID, or URL
 - **⚡ One-Click Install** - Fully automated with progress tracking
-- **🎨 Clean Dark Theme** - Modern interface with smooth animations
+- **🎨 Clean Dark Theme** - Modern interface
 - **📊 Live Activity Log** - See what's happening in real-time
 - **🔄 Auto Steam Restart** - Closes and reopens Steam automatically
 - **🔧 Admin Auto-Detect** - Requests permissions when needed
