@@ -18,7 +18,7 @@ A modern Windows application that makes installing games through SteamTools easy
 
 ## 📥 Quick Download
 
-**Download:** [SteamToolsAppAdder.exe](https://github.com/cahjul/steamtoolsadder/releases/latest)
+**Download:** [SteamToolsAppAdder.exe](https://github.com/cahjul/SteamToolsAppAdder/releases/latest)
 
 ### Prerequisites:
 1. **Steam** - Must be installed
